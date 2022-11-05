@@ -25,9 +25,7 @@ func NewTemplate(path string, options ...interface{}) (Template, error) {
 	return (&template{
 		originalTemplate: slashPrefix(path),
 		pathParts:        make([]pathPart, 0),
-		positionalVars:   make([]pathPart, 0),
-		namedVars:        map[string][]pathPart{},
-		posOnlyCount:     0,
+		posVarsCount:     0,
 		fixedMatchOpts:   fs,
 		varMatchOpts:     vs,
 		pathSplitOpts:    so,
@@ -66,9 +64,8 @@ type Template interface {
 type template struct {
 	originalTemplate string
 	pathParts        []pathPart
-	positionalVars   []pathPart
-	namedVars        map[string][]pathPart
-	posOnlyCount     int
+	posVarsCount     int
+	nameVarsCount    int
 	varsType         PathVarsType
 	fixedMatchOpts   fixedMatchOptions
 	varMatchOpts     varMatchOptions
@@ -80,7 +77,6 @@ func (t *template) PathFrom(vars PathVars) (string, error) {
 	var pb strings.Builder
 	tracker := &positionsTracker{
 		vars:           vars,
-		positional:     t.posOnlyCount > 0,
 		position:       0,
 		namedPositions: map[string]int{},
 	}
@@ -126,7 +122,7 @@ func (t *template) Sub(path string, options ...interface{}) (Template, error) {
 		return nil, err
 	}
 	ra, _ := add.(*template)
-	if (ra.posOnlyCount > 0 && len(t.namedVars) > 0) || (t.posOnlyCount > 0 && len(ra.namedVars) > 0) {
+	if (ra.posVarsCount > 0 && t.nameVarsCount > 0) || (t.posVarsCount > 0 && ra.nameVarsCount > 0) {
 		return nil, newTemplateParseError("template cannot contain both positional and named path variables", 0, nil)
 	}
 	result := t.clone()
@@ -138,9 +134,8 @@ func (t *template) Sub(path string, options ...interface{}) (Template, error) {
 	for _, pt := range ra.pathParts {
 		result.pathParts = append(result.pathParts, pt)
 	}
-	for _, argPt := range ra.positionalVars {
-		result.addVar(argPt)
-	}
+	result.posVarsCount += ra.posVarsCount
+	result.nameVarsCount += ra.nameVarsCount
 	return result, nil
 }
 
@@ -148,15 +143,13 @@ func (t *template) Sub(path string, options ...interface{}) (Template, error) {
 func (t *template) ResolveTo(vars PathVars) (Template, error) {
 	tracker := &positionsTracker{
 		vars:           vars,
-		positional:     t.posOnlyCount > 0,
 		position:       0,
 		namedPositions: map[string]int{},
 	}
 	result := &template{
-		pathParts:      make([]pathPart, 0, len(t.pathParts)),
-		positionalVars: make([]pathPart, 0, len(t.positionalVars)),
-		namedVars:      map[string][]pathPart{},
-		posOnlyCount:   0,
+		pathParts:     make([]pathPart, 0, len(t.pathParts)),
+		posVarsCount:  0,
+		nameVarsCount: 0,
 	}
 	var orgBuilder strings.Builder
 	for _, pt := range t.pathParts {
@@ -173,12 +166,11 @@ func (t *template) ResolveTo(vars PathVars) (Template, error) {
 			} else {
 				result.pathParts = append(result.pathParts, pt)
 				if pt.name == "" {
-					result.posOnlyCount++
-					result.positionalVars = append(result.positionalVars, pt)
+					result.posVarsCount++
 					orgBuilder.WriteString(`/?`)
 				} else {
 					orgBuilder.WriteString(`/{` + pt.name)
-					result.namedVars[pt.name] = append(result.namedVars[pt.name], pt)
+					result.nameVarsCount++
 					if pt.orgRegexp != "" {
 						orgBuilder.WriteString(`:` + pt.orgRegexp)
 					}
@@ -203,7 +195,7 @@ func (t *template) ResolveTo(vars PathVars) (Template, error) {
 					})
 				} else {
 					np.subParts = append(np.subParts, sp)
-					result.namedVars[sp.name] = append(result.namedVars[sp.name], sp)
+					result.nameVarsCount++
 				}
 			}
 			orgBuilder.WriteString(`/`)
@@ -239,7 +231,7 @@ func (t *template) ResolveTo(vars PathVars) (Template, error) {
 
 // VarsType returns the path vars type (Positions or Names)
 func (t *template) VarsType() PathVarsType {
-	if t.posOnlyCount != 0 {
+	if t.posVarsCount != 0 {
 		return Positions
 	}
 	return Names
@@ -325,14 +317,11 @@ func (t *template) clone() *template {
 	result := &template{
 		originalTemplate: t.originalTemplate,
 		pathParts:        make([]pathPart, 0, len(t.pathParts)),
-		positionalVars:   make([]pathPart, 0, len(t.positionalVars)),
-		namedVars:        map[string][]pathPart{},
+		posVarsCount:     t.posVarsCount,
+		nameVarsCount:    t.nameVarsCount,
+		varsType:         t.varsType,
 	}
 	result.pathParts = append(result.pathParts, t.pathParts...)
-	result.positionalVars = append(result.positionalVars, t.positionalVars...)
-	for k, v := range t.namedVars {
-		result.namedVars[k] = v
-	}
 	return result
 }
 
@@ -342,8 +331,10 @@ func (t *template) parse() (Template, error) {
 	}
 	splitOps := append(t.pathSplitOpts, &partCapture{template: t})
 	_, err := uriSplitter.Split(t.originalTemplate, splitOps...)
-	if t.posOnlyCount > 0 && len(t.namedVars) > 0 {
+	if t.posVarsCount > 0 && t.nameVarsCount > 0 {
 		return nil, newTemplateParseError("template cannot contain both positional and named path variables", 0, nil)
+	} else if t.nameVarsCount > 0 {
+		t.varsType = Names
 	}
 	if err != nil {
 		if terr := errors.Unwrap(err); terr != nil {
@@ -377,11 +368,10 @@ func (t *template) newUriPathPart(pt string, pos int, subParts []splitter.SubPar
 func (t *template) addVar(pt pathPart) {
 	if !pt.fixed {
 		if pt.name != "" {
-			t.namedVars[pt.name] = append(t.namedVars[pt.name], pt)
+			t.nameVarsCount++
 		} else {
-			t.posOnlyCount++
+			t.posVarsCount++
 		}
-		t.positionalVars = append(t.positionalVars, pt)
 	}
 }
 

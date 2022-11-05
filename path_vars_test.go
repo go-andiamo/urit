@@ -53,6 +53,12 @@ func TestPositional(t *testing.T) {
 	require.Equal(t, "b", all[1].Value)
 	require.Equal(t, 1, all[1].Position)
 	require.Equal(t, "", all[1].Name)
+
+	err := args.AddPositionalValue("c")
+	require.NoError(t, err)
+	require.Equal(t, 3, args.Len())
+	err = args.AddNamedValue("foo", "bar")
+	require.Error(t, err)
 }
 
 func TestNamed(t *testing.T) {
@@ -75,6 +81,12 @@ func TestNamed(t *testing.T) {
 	require.Equal(t, 2, all[2].Position)
 	require.Equal(t, "c", all[2].Value)
 	require.Equal(t, 1, all[2].NamedPosition)
+
+	err := args.AddNamedValue("qux", "d")
+	require.NoError(t, err)
+	require.Equal(t, 4, args.Len())
+	err = args.AddPositionalValue("whoops")
+	require.Error(t, err)
 }
 
 func TestNamedPanics(t *testing.T) {

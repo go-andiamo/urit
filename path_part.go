@@ -44,9 +44,9 @@ func (pt *pathPart) setName(name string, pos int) error {
 
 func (pt *pathPart) addFound(vars PathVars, val string) {
 	if pt.name != "" {
-		vars.AddNamedValue(pt.name, val)
+		_ = vars.AddNamedValue(pt.name, val)
 	} else {
-		vars.AddPositionalValue(val)
+		_ = vars.AddPositionalValue(val)
 	}
 }
 
@@ -150,22 +150,21 @@ func (pt *pathPart) pathFrom(tracker *positionsTracker) (string, error) {
 
 type positionsTracker struct {
 	vars           PathVars
-	positional     bool
 	position       int
 	namedPositions map[string]int
 }
 
-func (t *positionsTracker) getVar(pt *pathPart) (string, error) {
-	if t.positional {
-		if str, ok := t.vars.GetPositional(t.position); ok {
-			t.position++
+func (tr *positionsTracker) getVar(pt *pathPart) (string, error) {
+	if tr.vars.VarsType() == Positions {
+		if str, ok := tr.vars.GetPositional(tr.position); ok {
+			tr.position++
 			return str, nil
 		}
-		return "", fmt.Errorf("no var for position %d", t.position+1)
+		return "", fmt.Errorf("no var for position %d", tr.position+1)
 	} else {
-		np := t.namedPositions[pt.name]
-		if str, ok := t.vars.GetNamed(pt.name, np); ok {
-			t.namedPositions[pt.name] = np + 1
+		np := tr.namedPositions[pt.name]
+		if str, ok := tr.vars.GetNamed(pt.name, np); ok {
+			tr.namedPositions[pt.name] = np + 1
 			return str, nil
 		} else if np == 0 {
 			return "", fmt.Errorf("no var for '%s'", pt.name)
