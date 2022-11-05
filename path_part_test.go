@@ -18,7 +18,7 @@ func TestPathPart_Match_SingleFixed(t *testing.T) {
 }
 
 func TestPathPart_Match_SingleVar(t *testing.T) {
-	vars := newPathVars()
+	vars := newPathVars(Names)
 	pt := &pathPart{
 		fixed: false,
 		name:  "foo",
@@ -34,7 +34,7 @@ func TestPathPart_Match_SingleVar(t *testing.T) {
 }
 
 func TestPathPart_Match_SingleVarRegex(t *testing.T) {
-	vars := newPathVars()
+	vars := newPathVars(Names)
 	pt := &pathPart{
 		fixed:  false,
 		name:   "foo",
@@ -83,7 +83,7 @@ func TestPathPart_OverallRegexp(t *testing.T) {
 	ss = rx.FindStringSubmatch(`--a+z++`)
 	require.NotEmpty(t, ss)
 
-	vars := newPathVars()
+	vars := newPathVars(Positions)
 	ok := pt.multiMatch(`--a+z++12345`, 0, vars, nil)
 	require.True(t, ok)
 	require.Equal(t, 2, vars.Len())
@@ -105,7 +105,7 @@ func TestPathPart_OverallRegexp(t *testing.T) {
 }
 
 func TestPathPart_OverallRegexpMatch(t *testing.T) {
-	vars := newPathVars()
+	vars := newPathVars(Positions)
 	pt := pathPart{
 		subParts: []pathPart{
 			{

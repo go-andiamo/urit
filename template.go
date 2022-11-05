@@ -7,37 +7,19 @@ import (
 	"strings"
 )
 
-type Template interface {
-	// PathFrom generates a path from the template given the specified path vars
-	PathFrom(vars PathVars) (string, error)
-	// Matches checks whether the specified path matches the template -
-	// and if a successful match, returns the extracted path vars
-	Matches(path string, options ...interface{}) (PathVars, bool)
-	// MatchesRequest checks whether the specified request matches the template -
-	// and if a successful match, returns the extracted path vars
-	MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool)
-	// Sub generates a new template with added sub-path
-	Sub(path string, options ...interface{}) (Template, error)
-	// ResolveTo generates a new template, filling in any known path vars from the supplied vars
-	ResolveTo(vars PathVars) (Template, error)
-	// OriginalTemplate returns the original (or generated) path template string
-	OriginalTemplate() string
-}
+type PathVarsType int
 
-type template struct {
-	originalTemplate string
-	pathParts        []pathPart
-	positionalVars   []pathPart
-	namedVars        map[string][]pathPart
-	posOnlyCount     int
-	fixedMatchOpts   fixedMatchOptions
-	varMatchOpts     varMatchOptions
-	pathSplitOpts    []splitter.Option
-}
+const (
+	Positions PathVarsType = iota
+	Names
+)
 
 // NewTemplate creates a new URI template from the path provided
 //
 // returns an error if the path cannot be parsed into a template
+//
+// The options can be any FixedMatchOption or VarMatchOption - which can be used
+// to extend or check fixed or variable path parts
 func NewTemplate(path string, options ...interface{}) (Template, error) {
 	fs, vs, so := separateOptions(options)
 	return (&template{
@@ -59,6 +41,213 @@ func MustCreateTemplate(path string, options ...interface{}) Template {
 	} else {
 		return t
 	}
+}
+
+// Template is the interface for a URI template
+type Template interface {
+	// PathFrom generates a path from the template given the specified path vars
+	PathFrom(vars PathVars) (string, error)
+	// Matches checks whether the specified path matches the template -
+	// and if a successful match, returns the extracted path vars
+	Matches(path string, options ...interface{}) (PathVars, bool)
+	// MatchesRequest checks whether the specified request matches the template -
+	// and if a successful match, returns the extracted path vars
+	MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool)
+	// Sub generates a new template with added sub-path
+	Sub(path string, options ...interface{}) (Template, error)
+	// ResolveTo generates a new template, filling in any known path vars from the supplied vars
+	ResolveTo(vars PathVars) (Template, error)
+	// VarsType returns the path vars type (Positions or Names)
+	VarsType() PathVarsType
+	// OriginalTemplate returns the original (or generated) path template string
+	OriginalTemplate() string
+}
+
+type template struct {
+	originalTemplate string
+	pathParts        []pathPart
+	positionalVars   []pathPart
+	namedVars        map[string][]pathPart
+	posOnlyCount     int
+	varsType         PathVarsType
+	fixedMatchOpts   fixedMatchOptions
+	varMatchOpts     varMatchOptions
+	pathSplitOpts    []splitter.Option
+}
+
+// PathFrom generates a path from the template given the specified path vars
+func (t *template) PathFrom(vars PathVars) (string, error) {
+	var pb strings.Builder
+	tracker := &positionsTracker{
+		vars:           vars,
+		positional:     t.posOnlyCount > 0,
+		position:       0,
+		namedPositions: map[string]int{},
+	}
+	for _, pt := range t.pathParts {
+		if str, err := pt.pathFrom(tracker); err == nil {
+			pb.WriteString(str)
+		} else {
+			return "", err
+		}
+	}
+	return pb.String(), nil
+}
+
+// Matches checks whether the specified path matches the template -
+// and if a successful match, returns the extracted path vars
+func (t *template) Matches(path string, options ...interface{}) (PathVars, bool) {
+	pts, err := matchPathSplitter.Split(path)
+	if err != nil || len(pts) != len(t.pathParts) {
+		return nil, false
+	}
+	result := newPathVars(t.varsType)
+	fixedOpts, varOpts := t.mergeOptions(options)
+	ok := true
+	for i, pt := range t.pathParts {
+		ok = pt.match(pts[i], i, result, fixedOpts, varOpts)
+		if !ok {
+			break
+		}
+	}
+	return result, ok
+}
+
+// MatchesRequest checks whether the specified request matches the template -
+// and if a successful match, returns the extracted path vars
+func (t *template) MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool) {
+	return t.Matches(req.URL.Path, options...)
+}
+
+// Sub generates a new template with added sub-path
+func (t *template) Sub(path string, options ...interface{}) (Template, error) {
+	add, err := NewTemplate(path, options...)
+	if err != nil {
+		return nil, err
+	}
+	ra, _ := add.(*template)
+	if (ra.posOnlyCount > 0 && len(t.namedVars) > 0) || (t.posOnlyCount > 0 && len(ra.namedVars) > 0) {
+		return nil, newTemplateParseError("template cannot contain both positional and named path variables", 0, nil)
+	}
+	result := t.clone()
+	if strings.HasSuffix(result.originalTemplate, "/") {
+		result.originalTemplate = result.originalTemplate[:len(result.originalTemplate)-1] + ra.originalTemplate
+	} else {
+		result.originalTemplate = result.originalTemplate + ra.originalTemplate
+	}
+	for _, pt := range ra.pathParts {
+		result.pathParts = append(result.pathParts, pt)
+	}
+	for _, argPt := range ra.positionalVars {
+		result.addVar(argPt)
+	}
+	return result, nil
+}
+
+// ResolveTo generates a new template, filling in any known path vars from the supplied vars
+func (t *template) ResolveTo(vars PathVars) (Template, error) {
+	tracker := &positionsTracker{
+		vars:           vars,
+		positional:     t.posOnlyCount > 0,
+		position:       0,
+		namedPositions: map[string]int{},
+	}
+	result := &template{
+		pathParts:      make([]pathPart, 0, len(t.pathParts)),
+		positionalVars: make([]pathPart, 0, len(t.positionalVars)),
+		namedVars:      map[string][]pathPart{},
+		posOnlyCount:   0,
+	}
+	var orgBuilder strings.Builder
+	for _, pt := range t.pathParts {
+		if pt.fixed {
+			orgBuilder.WriteString(`/` + pt.fixedValue)
+			result.pathParts = append(result.pathParts, pt)
+		} else if len(pt.subParts) == 0 {
+			if str, err := tracker.getVar(&pt); err == nil {
+				orgBuilder.WriteString(`/` + str)
+				result.pathParts = append(result.pathParts, pathPart{
+					fixed:      true,
+					fixedValue: str,
+				})
+			} else {
+				result.pathParts = append(result.pathParts, pt)
+				if pt.name == "" {
+					result.posOnlyCount++
+					result.positionalVars = append(result.positionalVars, pt)
+					orgBuilder.WriteString(`/?`)
+				} else {
+					orgBuilder.WriteString(`/{` + pt.name)
+					result.namedVars[pt.name] = append(result.namedVars[pt.name], pt)
+					if pt.orgRegexp != "" {
+						orgBuilder.WriteString(`:` + pt.orgRegexp)
+					}
+					orgBuilder.WriteString(`}`)
+				}
+			}
+		} else {
+			np := pathPart{
+				fixed:    false,
+				subParts: make([]pathPart, 0, len(pt.subParts)),
+			}
+			resolvedCount := 0
+			for _, sp := range pt.subParts {
+				if sp.fixed {
+					resolvedCount++
+					np.subParts = append(np.subParts, sp)
+				} else if str, err := tracker.getVar(&sp); err == nil {
+					resolvedCount++
+					np.subParts = append(np.subParts, pathPart{
+						fixed:      true,
+						fixedValue: str,
+					})
+				} else {
+					np.subParts = append(np.subParts, sp)
+					result.namedVars[sp.name] = append(result.namedVars[sp.name], sp)
+				}
+			}
+			orgBuilder.WriteString(`/`)
+			if resolvedCount == len(pt.subParts) {
+				fxnp := pathPart{
+					fixed:      true,
+					fixedValue: "",
+				}
+				for _, sp := range np.subParts {
+					orgBuilder.WriteString(sp.fixedValue)
+					fxnp.fixedValue += sp.fixedValue
+				}
+				np = fxnp
+			} else {
+				for _, sp := range np.subParts {
+					if sp.fixed {
+						orgBuilder.WriteString(sp.fixedValue)
+					} else {
+						orgBuilder.WriteString(`{` + sp.name)
+						if sp.orgRegexp != "" {
+							orgBuilder.WriteString(`:` + sp.orgRegexp)
+						}
+						orgBuilder.WriteString(`}`)
+					}
+				}
+			}
+			result.pathParts = append(result.pathParts, np)
+		}
+	}
+	result.originalTemplate = orgBuilder.String()
+	return result, nil
+}
+
+// VarsType returns the path vars type (Positions or Names)
+func (t *template) VarsType() PathVarsType {
+	if t.posOnlyCount != 0 {
+		return Positions
+	}
+	return Names
+}
+
+// OriginalTemplate returns the original (or generated) path template string
+func (t *template) OriginalTemplate() string {
+	return t.originalTemplate
 }
 
 func separateOptions(options []interface{}) (fixedMatchOptions, varMatchOptions, []splitter.Option) {
@@ -241,167 +430,8 @@ func (t *template) newVarPathPart(pt string, pos int, subParts []splitter.SubPar
 	return result, nil
 }
 
-func (t *template) PathFrom(vars PathVars) (string, error) {
-	var pb strings.Builder
-	tracker := &positionsTracker{
-		vars:           vars,
-		positional:     t.posOnlyCount > 0,
-		position:       0,
-		namedPositions: map[string]int{},
-	}
-	for _, pt := range t.pathParts {
-		if str, err := pt.pathFrom(tracker); err == nil {
-			pb.WriteString(str)
-		} else {
-			return "", err
-		}
-	}
-	return pb.String(), nil
-}
-
 var matchPathSplitter = splitter.MustCreateSplitter('/').
 	AddDefaultOptions(splitter.IgnoreEmptyFirst, splitter.IgnoreEmptyLast, splitter.NotEmptyInners)
-
-func (t *template) Matches(path string, options ...interface{}) (PathVars, bool) {
-	pts, err := matchPathSplitter.Split(path)
-	if err != nil || len(pts) != len(t.pathParts) {
-		return nil, false
-	}
-	result := newPathVars()
-	fixedOpts, varOpts := t.mergeOptions(options)
-	ok := true
-	for i, pt := range t.pathParts {
-		ok = pt.match(pts[i], i, result, fixedOpts, varOpts)
-		if !ok {
-			break
-		}
-	}
-	return result, ok
-}
-
-func (t *template) MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool) {
-	return t.Matches(req.URL.Path, options...)
-}
-
-func (t *template) Sub(path string, options ...interface{}) (Template, error) {
-	add, err := NewTemplate(path, options...)
-	if err != nil {
-		return nil, err
-	}
-	ra, _ := add.(*template)
-	if (ra.posOnlyCount > 0 && len(t.namedVars) > 0) || (t.posOnlyCount > 0 && len(ra.namedVars) > 0) {
-		return nil, newTemplateParseError("template cannot contain both positional and named path variables", 0, nil)
-	}
-	result := t.clone()
-	if strings.HasSuffix(result.originalTemplate, "/") {
-		result.originalTemplate = result.originalTemplate[:len(result.originalTemplate)-1] + ra.originalTemplate
-	} else {
-		result.originalTemplate = result.originalTemplate + ra.originalTemplate
-	}
-	for _, pt := range ra.pathParts {
-		result.pathParts = append(result.pathParts, pt)
-	}
-	for _, argPt := range ra.positionalVars {
-		result.addVar(argPt)
-	}
-	return result, nil
-}
-
-func (t *template) ResolveTo(vars PathVars) (Template, error) {
-	tracker := &positionsTracker{
-		vars:           vars,
-		positional:     t.posOnlyCount > 0,
-		position:       0,
-		namedPositions: map[string]int{},
-	}
-	result := &template{
-		pathParts:      make([]pathPart, 0, len(t.pathParts)),
-		positionalVars: make([]pathPart, 0, len(t.positionalVars)),
-		namedVars:      map[string][]pathPart{},
-		posOnlyCount:   0,
-	}
-	var orgBuilder strings.Builder
-	for _, pt := range t.pathParts {
-		if pt.fixed {
-			orgBuilder.WriteString(`/` + pt.fixedValue)
-			result.pathParts = append(result.pathParts, pt)
-		} else if len(pt.subParts) == 0 {
-			if str, err := tracker.getVar(&pt); err == nil {
-				orgBuilder.WriteString(`/` + str)
-				result.pathParts = append(result.pathParts, pathPart{
-					fixed:      true,
-					fixedValue: str,
-				})
-			} else {
-				result.pathParts = append(result.pathParts, pt)
-				if pt.name == "" {
-					result.posOnlyCount++
-					result.positionalVars = append(result.positionalVars, pt)
-					orgBuilder.WriteString(`/?`)
-				} else {
-					orgBuilder.WriteString(`/{` + pt.name)
-					result.namedVars[pt.name] = append(result.namedVars[pt.name], pt)
-					if pt.orgRegexp != "" {
-						orgBuilder.WriteString(`:` + pt.orgRegexp)
-					}
-					orgBuilder.WriteString(`}`)
-				}
-			}
-		} else {
-			np := pathPart{
-				fixed:    false,
-				subParts: make([]pathPart, 0, len(pt.subParts)),
-			}
-			resolvedCount := 0
-			for _, sp := range pt.subParts {
-				if sp.fixed {
-					resolvedCount++
-					np.subParts = append(np.subParts, sp)
-				} else if str, err := tracker.getVar(&sp); err == nil {
-					resolvedCount++
-					np.subParts = append(np.subParts, pathPart{
-						fixed:      true,
-						fixedValue: str,
-					})
-				} else {
-					np.subParts = append(np.subParts, sp)
-					result.namedVars[sp.name] = append(result.namedVars[sp.name], sp)
-				}
-			}
-			orgBuilder.WriteString(`/`)
-			if resolvedCount == len(pt.subParts) {
-				fxnp := pathPart{
-					fixed:      true,
-					fixedValue: "",
-				}
-				for _, sp := range np.subParts {
-					orgBuilder.WriteString(sp.fixedValue)
-					fxnp.fixedValue += sp.fixedValue
-				}
-				np = fxnp
-			} else {
-				for _, sp := range np.subParts {
-					if sp.fixed {
-						orgBuilder.WriteString(sp.fixedValue)
-					} else {
-						orgBuilder.WriteString(`{` + sp.name)
-						if sp.orgRegexp != "" {
-							orgBuilder.WriteString(`:` + sp.orgRegexp)
-						}
-						orgBuilder.WriteString(`}`)
-					}
-				}
-			}
-			result.pathParts = append(result.pathParts, np)
-		}
-	}
-	result.originalTemplate = orgBuilder.String()
-	return result, nil
-}
-
-func (t *template) OriginalTemplate() string {
-	return t.originalTemplate
-}
 
 func slashPrefix(s string) string {
 	if strings.Trim(s, " ") == "" {

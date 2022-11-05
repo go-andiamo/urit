@@ -9,7 +9,7 @@ type PathVar struct {
 
 // PathVars is the interface used to pass path vars into a template and returned from a template after extracting
 //
-// Use either Positional or Named to create a PathVars
+// Use either Positional or Named to create a new PathVars
 type PathVars interface {
 	GetPositional(position int) (string, bool)
 	GetNamed(name string, position int) (string, bool)
@@ -19,19 +19,23 @@ type PathVars interface {
 	GetAll() []PathVar
 	Len() int
 	Clear()
+	// VarsType returns the path vars type (Positions or Names)
+	VarsType() PathVarsType
 	AddNamedValue(name string, val string)
 	AddPositionalValue(val string)
 }
 
 type pathVars struct {
-	named map[string][]PathVar
-	all   []PathVar
+	named    map[string][]PathVar
+	all      []PathVar
+	varsType PathVarsType
 }
 
-func newPathVars() PathVars {
+func newPathVars(varsType PathVarsType) PathVars {
 	return &pathVars{
-		named: map[string][]PathVar{},
-		all:   make([]PathVar, 0),
+		named:    map[string][]PathVar{},
+		all:      make([]PathVar, 0),
+		varsType: varsType,
 	}
 }
 
@@ -103,6 +107,11 @@ func (pvs *pathVars) Clear() {
 	pvs.all = make([]PathVar, 0)
 }
 
+// VarsType returns the path vars type (Positions or Names)
+func (pvs *pathVars) VarsType() PathVarsType {
+	return pvs.varsType
+}
+
 func (pvs *pathVars) AddNamedValue(name string, val string) {
 	np := len(pvs.named[name])
 	v := PathVar{
@@ -124,7 +133,7 @@ func (pvs *pathVars) AddPositionalValue(val string) {
 
 // Positional creates a positional PathVars from the values supplied
 func Positional(values ...string) PathVars {
-	result := newPathVars()
+	result := newPathVars(Positions)
 	for _, val := range values {
 		result.AddPositionalValue(val)
 	}
@@ -139,7 +148,7 @@ func Named(namesAndValues ...string) PathVars {
 	if len(namesAndValues)%2 != 0 {
 		panic("must be a value for each name")
 	}
-	result := newPathVars()
+	result := newPathVars(Names)
 	for i := 0; i < len(namesAndValues); i += 2 {
 		result.AddNamedValue(namesAndValues[i], namesAndValues[i+1])
 	}

@@ -43,6 +43,7 @@ func TestPathVars_Get(t *testing.T) {
 
 func TestPositional(t *testing.T) {
 	args := Positional("a", "b")
+	require.Equal(t, Positions, args.VarsType())
 	require.Equal(t, 2, args.Len())
 	all := args.GetAll()
 	require.Equal(t, 2, len(all))
@@ -56,6 +57,7 @@ func TestPositional(t *testing.T) {
 
 func TestNamed(t *testing.T) {
 	args := Named("foo", "a", "bar", "b", "bar", "c")
+	require.Equal(t, Names, args.VarsType())
 	require.Equal(t, 3, args.Len())
 	all := args.GetAll()
 	require.Equal(t, 3, len(all))
