@@ -33,10 +33,8 @@ func TestNewTemplate(t *testing.T) {
 	require.Equal(t, `^[a-z]*$`, rt.pathParts[4].regexp.String())
 	require.Equal(t, `qux`, rt.pathParts[4].name)
 
-	require.Equal(t, 3, len(rt.namedVars))
-	require.Equal(t, 2, len(rt.namedVars["bar"]))
-	require.Equal(t, 1, len(rt.namedVars["baz"]))
-	require.Equal(t, 1, len(rt.namedVars["qux"]))
+	require.Equal(t, 4, rt.nameVarsCount)
+	require.Equal(t, 0, rt.posVarsCount)
 }
 
 func TestNewTemplatePositional(t *testing.T) {

@@ -1,5 +1,7 @@
 package urit
 
+import "errors"
+
 type PathVar struct {
 	Name          string
 	NamedPosition int
@@ -21,8 +23,8 @@ type PathVars interface {
 	Clear()
 	// VarsType returns the path vars type (Positions or Names)
 	VarsType() PathVarsType
-	AddNamedValue(name string, val string)
-	AddPositionalValue(val string)
+	AddNamedValue(name string, val string) error
+	AddPositionalValue(val string) error
 }
 
 type pathVars struct {
@@ -112,7 +114,10 @@ func (pvs *pathVars) VarsType() PathVarsType {
 	return pvs.varsType
 }
 
-func (pvs *pathVars) AddNamedValue(name string, val string) {
+func (pvs *pathVars) AddNamedValue(name string, val string) error {
+	if pvs.varsType != Names {
+		return errors.New("cannot add named var to non-names vars")
+	}
 	np := len(pvs.named[name])
 	v := PathVar{
 		Name:          name,
@@ -122,20 +127,25 @@ func (pvs *pathVars) AddNamedValue(name string, val string) {
 	}
 	pvs.named[name] = append(pvs.named[name], v)
 	pvs.all = append(pvs.all, v)
+	return nil
 }
 
-func (pvs *pathVars) AddPositionalValue(val string) {
+func (pvs *pathVars) AddPositionalValue(val string) error {
+	if pvs.varsType != Positions {
+		return errors.New("cannot add positional var to non-positionals vars")
+	}
 	pvs.all = append(pvs.all, PathVar{
 		Position: len(pvs.all),
 		Value:    val,
 	})
+	return nil
 }
 
 // Positional creates a positional PathVars from the values supplied
 func Positional(values ...string) PathVars {
 	result := newPathVars(Positions)
 	for _, val := range values {
-		result.AddPositionalValue(val)
+		_ = result.AddPositionalValue(val)
 	}
 	return result
 }
@@ -150,7 +160,7 @@ func Named(namesAndValues ...string) PathVars {
 	}
 	result := newPathVars(Names)
 	for i := 0; i < len(namesAndValues); i += 2 {
-		result.AddNamedValue(namesAndValues[i], namesAndValues[i+1])
+		_ = result.AddNamedValue(namesAndValues[i], namesAndValues[i+1])
 	}
 	return result
 }

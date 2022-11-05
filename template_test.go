@@ -154,6 +154,8 @@ func TestTemplate_ResolveTo(t *testing.T) {
 	rt, ok := tmp2.(*template)
 	require.True(t, ok)
 	require.NotNil(t, rt)
+	require.Equal(t, 0, rt.posVarsCount)
+	require.Equal(t, 1, rt.nameVarsCount)
 	require.Equal(t, 4, len(rt.pathParts))
 	require.True(t, rt.pathParts[0].fixed)
 	require.True(t, rt.pathParts[1].fixed)
@@ -172,10 +174,18 @@ func TestTemplate_ResolveTo(t *testing.T) {
 		"bar", "345"))
 	require.NoError(t, err)
 	require.Equal(t, `/foo/fooey/bar/--abc-345--`, tmp2.OriginalTemplate())
+	rt, ok = tmp2.(*template)
+	require.True(t, ok)
+	require.Equal(t, 0, rt.posVarsCount)
+	require.Equal(t, 0, rt.nameVarsCount)
 
 	tmp2, err = tmp.ResolveTo(Named("bar", "abc"))
 	require.NoError(t, err)
 	require.Equal(t, `/foo/{foo:[a-z]*}/bar/--abc-{bar:[0-9]*}--`, tmp2.OriginalTemplate())
+	rt, ok = tmp2.(*template)
+	require.True(t, ok)
+	require.Equal(t, 0, rt.posVarsCount)
+	require.Equal(t, 2, rt.nameVarsCount)
 }
 
 func TestTemplate_ResolveTo_Positional(t *testing.T) {
@@ -185,10 +195,18 @@ func TestTemplate_ResolveTo_Positional(t *testing.T) {
 	tmp2, err := tmp.ResolveTo(Positional())
 	require.NoError(t, err)
 	require.Equal(t, `/foo/?/bar/?/baz/?`, tmp2.OriginalTemplate())
+	rt2, ok := tmp2.(*template)
+	require.True(t, ok)
+	require.Equal(t, 3, rt2.posVarsCount)
+	require.Equal(t, 0, rt2.nameVarsCount)
 
 	tmp2, err = tmp.ResolveTo(Positional("fooey"))
 	require.NoError(t, err)
 	require.Equal(t, `/foo/fooey/bar/?/baz/?`, tmp2.OriginalTemplate())
+	rt2, ok = tmp2.(*template)
+	require.True(t, ok)
+	require.Equal(t, 2, rt2.posVarsCount)
+	require.Equal(t, 0, rt2.nameVarsCount)
 
 	tmp2, err = tmp.ResolveTo(Positional("fooey", "barey"))
 	require.NoError(t, err)
@@ -202,6 +220,10 @@ func TestTemplate_ResolveTo_Positional(t *testing.T) {
 	str, err := tmp2.PathFrom(Positional())
 	require.NoError(t, err)
 	require.Equal(t, `/foo/fooey/bar/barey/baz/bazey`, str)
+	rt2, ok = tmp2.(*template)
+	require.True(t, ok)
+	require.Equal(t, 0, rt2.posVarsCount)
+	require.Equal(t, 0, rt2.nameVarsCount)
 }
 
 func TestCaseInsensitiveFixed_Match(t *testing.T) {

@@ -83,7 +83,7 @@ func TestPathPart_OverallRegexp(t *testing.T) {
 	ss = rx.FindStringSubmatch(`--a+z++`)
 	require.NotEmpty(t, ss)
 
-	vars := newPathVars(Positions)
+	vars := newPathVars(Names)
 	ok := pt.multiMatch(`--a+z++12345`, 0, vars, nil)
 	require.True(t, ok)
 	require.Equal(t, 2, vars.Len())
@@ -105,7 +105,7 @@ func TestPathPart_OverallRegexp(t *testing.T) {
 }
 
 func TestPathPart_OverallRegexpMatch(t *testing.T) {
-	vars := newPathVars(Positions)
+	vars := newPathVars(Names)
 	pt := pathPart{
 		subParts: []pathPart{
 			{
