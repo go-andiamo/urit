@@ -42,6 +42,14 @@ println(vars.Get(0))
 println(vars.Get(1))
 ```
 
+Generate path from a template...
+```go
+template := urit.MustCreateTemplate(`/credits/{year:[0-9]{4}}/{month:[0-9]{2}}`)
+
+path, _ := template.PathFrom(urit.Named("year", "2022", "month", "11"))
+println(path)
+```
+
 ## Installation
 To install Urit, use go get:
 

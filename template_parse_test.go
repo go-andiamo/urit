@@ -12,6 +12,7 @@ func TestNewTemplate(t *testing.T) {
 	tmp, err := NewTemplate("foo/?bar/:bar/{baz}/{qux:[a-z]*}/")
 	require.NoError(t, err)
 	require.NotNil(t, tmp)
+	require.Equal(t, Names, tmp.VarsType())
 	require.Equal(t, `/foo/?bar/:bar/{baz}/{qux:[a-z]*}/`, tmp.OriginalTemplate())
 	rt, ok := tmp.(*template)
 	require.True(t, ok)
@@ -36,6 +37,25 @@ func TestNewTemplate(t *testing.T) {
 	require.Equal(t, 2, len(rt.namedVars["bar"]))
 	require.Equal(t, 1, len(rt.namedVars["baz"]))
 	require.Equal(t, 1, len(rt.namedVars["qux"]))
+}
+
+func TestNewTemplatePositional(t *testing.T) {
+	tmp, err := NewTemplate("foo/?/?")
+	require.NoError(t, err)
+	require.NotNil(t, tmp)
+	require.Equal(t, Positions, tmp.VarsType())
+	require.Equal(t, `/foo/?/?`, tmp.OriginalTemplate())
+	rt, ok := tmp.(*template)
+	require.True(t, ok)
+	require.Equal(t, 3, len(rt.pathParts))
+	require.True(t, rt.pathParts[0].fixed)
+	require.Equal(t, `foo`, rt.pathParts[0].fixedValue)
+	require.False(t, rt.pathParts[1].fixed)
+	require.Nil(t, rt.pathParts[1].regexp)
+	require.Equal(t, ``, rt.pathParts[1].name)
+	require.False(t, rt.pathParts[2].fixed)
+	require.Nil(t, rt.pathParts[2].regexp)
+	require.Equal(t, ``, rt.pathParts[2].name)
 }
 
 func TestMustCreateTemplatePanics(t *testing.T) {
