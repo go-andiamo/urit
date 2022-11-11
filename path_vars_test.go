@@ -91,7 +91,10 @@ func TestNamed(t *testing.T) {
 
 func TestNamedPanics(t *testing.T) {
 	require.Panics(t, func() {
-		Named("a", "b", "c")
+		Named("a", "b", "c") // not an even number!
+	})
+	require.Panics(t, func() {
+		Named(true, false) // first should be a string!
 	})
 }
 

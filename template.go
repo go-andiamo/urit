@@ -3,6 +3,7 @@ package urit
 import (
 	"errors"
 	"github.com/go-andiamo/splitter"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -21,7 +22,7 @@ const (
 // The options can be any FixedMatchOption or VarMatchOption - which can be used
 // to extend or check fixed or variable path parts
 func NewTemplate(path string, options ...interface{}) (Template, error) {
-	fs, vs, so := separateOptions(options)
+	fs, vs, so := separateParseOptions(options)
 	return (&template{
 		originalTemplate: slashPrefix(path),
 		pathParts:        make([]pathPart, 0),
@@ -44,7 +45,9 @@ func MustCreateTemplate(path string, options ...interface{}) Template {
 // Template is the interface for a URI template
 type Template interface {
 	// PathFrom generates a path from the template given the specified path vars
-	PathFrom(vars PathVars) (string, error)
+	PathFrom(vars PathVars, options ...interface{}) (string, error)
+	// RequestFrom generates a http.Request from the template given the specified path vars
+	RequestFrom(method string, vars PathVars, body io.Reader, options ...interface{}) (*http.Request, error)
 	// Matches checks whether the specified path matches the template -
 	// and if a successful match, returns the extracted path vars
 	Matches(path string, options ...interface{}) (PathVars, bool)
@@ -73,12 +76,22 @@ type template struct {
 }
 
 // PathFrom generates a path from the template given the specified path vars
-func (t *template) PathFrom(vars PathVars) (string, error) {
+func (t *template) PathFrom(vars PathVars, options ...interface{}) (string, error) {
+	hostOption, queryOption, _, varMatches := separatePathOptions(options)
+	return t.buildPath(vars, hostOption, queryOption, varMatches)
+}
+
+func (t *template) buildPath(vars PathVars, hostOption HostOption, queryOption QueryParamsOption, varMatches varMatchOptions) (string, error) {
 	var pb strings.Builder
+	if hostOption != nil {
+		pb.WriteString(hostOption.GetAddress())
+	}
 	tracker := &positionsTracker{
 		vars:           vars,
-		position:       0,
+		varPosition:    0,
+		pathPosition:   0,
 		namedPositions: map[string]int{},
+		varMatches:     varMatches,
 	}
 	for _, pt := range t.pathParts {
 		if str, err := pt.pathFrom(tracker); err == nil {
@@ -86,8 +99,39 @@ func (t *template) PathFrom(vars PathVars) (string, error) {
 		} else {
 			return "", err
 		}
+		tracker.pathPosition++
+	}
+	if queryOption != nil {
+		if q, err := queryOption.GetQuery(); err == nil {
+			pb.WriteString(q)
+		} else {
+			return "", err
+		}
 	}
 	return pb.String(), nil
+}
+
+// RequestFrom generates a http.Request from the template given the specified path vars
+func (t *template) RequestFrom(method string, vars PathVars, body io.Reader, options ...interface{}) (*http.Request, error) {
+	hostOption, queryOption, headerOption, varMatches := separatePathOptions(options)
+	url, err := t.buildPath(vars, hostOption, queryOption, varMatches)
+	if err != nil {
+		return nil, err
+	}
+	result, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if headerOption != nil {
+		hds, err := headerOption.GetHeaders()
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range hds {
+			result.Header.Set(k, v)
+		}
+	}
+	return result, nil
 }
 
 // Matches checks whether the specified path matches the template -
@@ -98,7 +142,7 @@ func (t *template) Matches(path string, options ...interface{}) (PathVars, bool)
 		return nil, false
 	}
 	result := newPathVars(t.varsType)
-	fixedOpts, varOpts := t.mergeOptions(options)
+	fixedOpts, varOpts := t.mergeParseOptions(options)
 	ok := true
 	for i, pt := range t.pathParts {
 		ok = pt.match(pts[i], i, result, fixedOpts, varOpts)
@@ -143,7 +187,7 @@ func (t *template) Sub(path string, options ...interface{}) (Template, error) {
 func (t *template) ResolveTo(vars PathVars) (Template, error) {
 	tracker := &positionsTracker{
 		vars:           vars,
-		position:       0,
+		varPosition:    0,
 		namedPositions: map[string]int{},
 	}
 	result := &template{
@@ -242,7 +286,22 @@ func (t *template) OriginalTemplate() string {
 	return t.originalTemplate
 }
 
-func separateOptions(options []interface{}) (fixedMatchOptions, varMatchOptions, []splitter.Option) {
+func separatePathOptions(options []interface{}) (host HostOption, params QueryParamsOption, headers HeadersOption, varMatches varMatchOptions) {
+	for _, intf := range options {
+		if h, ok := intf.(HostOption); ok {
+			host = h
+		} else if q, ok := intf.(QueryParamsOption); ok {
+			params = q
+		} else if hd, ok := intf.(HeadersOption); ok {
+			headers = hd
+		} else if v, ok := intf.(VarMatchOption); ok {
+			varMatches = append(varMatches, v)
+		}
+	}
+	return
+}
+
+func separateParseOptions(options []interface{}) (fixedMatchOptions, varMatchOptions, []splitter.Option) {
 	seenFixed := map[FixedMatchOption]bool{}
 	seenVar := map[VarMatchOption]bool{}
 	fixeds := make(fixedMatchOptions, 0)
@@ -262,11 +321,11 @@ func separateOptions(options []interface{}) (fixedMatchOptions, varMatchOptions,
 	return fixeds, vars, splitOps
 }
 
-func (t *template) mergeOptions(options []interface{}) (fixedMatchOptions, varMatchOptions) {
+func (t *template) mergeParseOptions(options []interface{}) (fixedMatchOptions, varMatchOptions) {
 	if len(options) == 0 {
 		return t.fixedMatchOpts, t.varMatchOpts
 	} else if len(t.fixedMatchOpts) == 0 && len(t.varMatchOpts) == 0 {
-		fs, vs, _ := separateOptions(options)
+		fs, vs, _ := separateParseOptions(options)
 		return fs, vs
 	}
 	fixed := make(fixedMatchOptions, 0)
@@ -362,7 +421,7 @@ func (t *template) newUriPathPart(pt string, pos int, subParts []splitter.SubPar
 			}, nil
 		}
 	}
-	return t.newVarPathPart(pt, pos, subParts)
+	return t.newVarPathPart(subParts)
 }
 
 func (t *template) addVar(pt pathPart) {
@@ -375,7 +434,7 @@ func (t *template) addVar(pt pathPart) {
 	}
 }
 
-func (t *template) newVarPathPart(pt string, pos int, subParts []splitter.SubPart) (pathPart, error) {
+func (t *template) newVarPathPart(subParts []splitter.SubPart) (pathPart, error) {
 	result := pathPart{
 		fixed:    false,
 		subParts: make([]pathPart, 0),
