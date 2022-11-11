@@ -16,14 +16,14 @@ Extract vars from paths - using named...
 	req, _ := http.NewRequest(`GET`, `http://www.example.com/credits/2022/11`, nil)
 	vars, ok := template.MatchesRequest(req)
 	println(ok)
-	println(vars.Get("year"))
-	println(vars.Get("month"))
+	println(vars.GetQuery("year"))
+	println(vars.GetQuery("month"))
 Or extract using positional...
 	template := urit.MustCreateTemplate(`/credits/?/?`)
 	req, _ := http.NewRequest(`GET`, `http://www.example.com/credits/2022/11`, nil)
 	vars, ok := template.MatchesRequest(req)
 	println(ok)
-	println(vars.Get(0))
-	println(vars.Get(1))
+	println(vars.GetQuery(0))
+	println(vars.GetQuery(1))
 */
 package urit

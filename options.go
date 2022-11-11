@@ -23,9 +23,11 @@ type VarMatchOption interface {
 
 var (
 	_CaseInsensitiveFixed = &caseInsensitiveFixed{}
+	_PathRegexCheck       = &pathRegexChecker{}
 )
 var (
 	CaseInsensitiveFixed = _CaseInsensitiveFixed // is a FixedMatchOption that can be used with templates to allow case-insensitive fixed path parts
+	PathRegexCheck       = _PathRegexCheck       // is a VarMatchOption that can be used with Template.PathFrom or Template.RequestFrom to check that vars passed in match regexes for the path part
 )
 
 type fixedMatchOptions []FixedMatchOption
@@ -63,4 +65,17 @@ type caseInsensitiveFixed struct{}
 
 func (o *caseInsensitiveFixed) Match(value string, expected string, pathPos int, vars PathVars) bool {
 	return value == expected || strings.EqualFold(value, expected)
+}
+
+type pathRegexChecker struct{}
+
+func (o *pathRegexChecker) Applicable(value string, position int, name string, rx *regexp.Regexp, rxs string, pathPos int, vars PathVars) bool {
+	return rx != nil
+}
+
+func (o *pathRegexChecker) Match(value string, position int, name string, rx *regexp.Regexp, rxs string, pathPos int, vars PathVars) (string, bool) {
+	if rx != nil && !rx.MatchString(value) {
+		return value, false
+	}
+	return value, true
 }

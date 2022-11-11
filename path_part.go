@@ -1,6 +1,7 @@
 package urit
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -150,27 +151,53 @@ func (pt *pathPart) pathFrom(tracker *positionsTracker) (string, error) {
 
 type positionsTracker struct {
 	vars           PathVars
-	position       int
+	varPosition    int
+	pathPosition   int
 	namedPositions map[string]int
+	varMatches     varMatchOptions
 }
 
 func (tr *positionsTracker) getVar(pt *pathPart) (string, error) {
-	if tr.vars.VarsType() == Positions {
-		if str, ok := tr.vars.GetPositional(tr.position); ok {
-			tr.position++
+	useVars := tr.vars
+	if useVars == nil {
+		useVars = Positional()
+	}
+	var err error
+	if useVars.VarsType() == Positions {
+		if str, ok := useVars.GetPositional(tr.varPosition); ok {
+			tr.varPosition++
 			return str, nil
 		}
-		return "", fmt.Errorf("no var for position %d", tr.position+1)
+		return "", fmt.Errorf("no var for varPosition %d", tr.varPosition+1)
 	} else {
 		np := tr.namedPositions[pt.name]
-		if str, ok := tr.vars.GetNamed(pt.name, np); ok {
+		if str, ok := useVars.GetNamed(pt.name, np); ok {
+			str, err = tr.checkVar(str, pt, tr.varPosition, tr.pathPosition)
+			if err != nil {
+				return "", err
+			}
 			tr.namedPositions[pt.name] = np + 1
+			tr.varPosition++
 			return str, nil
 		} else if np == 0 {
 			return "", fmt.Errorf("no var for '%s'", pt.name)
 		}
-		return "", fmt.Errorf("no var for '%s' (position %d)", pt.name, np+1)
+		return "", fmt.Errorf("no var for '%s' (varPosition %d)", pt.name, np+1)
 	}
+}
+
+func (tr *positionsTracker) checkVar(s string, pt *pathPart, pos int, pathPos int) (result string, err error) {
+	result = s
+	for _, ck := range tr.varMatches {
+		if ck.Applicable(result, pos, pt.name, pt.regexp, pt.orgRegexp, pathPos, tr.vars) {
+			if altS, ok := ck.Match(result, pos, pt.name, pt.regexp, pt.orgRegexp, pathPos, tr.vars); ok {
+				result = altS
+			} else {
+				err = errors.New("no match path var")
+			}
+		}
+	}
+	return
 }
 
 func addRegexHeadAndTail(rx string) string {
