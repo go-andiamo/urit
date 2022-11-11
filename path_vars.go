@@ -6,7 +6,7 @@ type PathVar struct {
 	Name          string
 	NamedPosition int
 	Position      int
-	Value         string
+	Value         interface{}
 }
 
 // PathVars is the interface used to pass path vars into a template and returned from a template after extracting
@@ -23,8 +23,8 @@ type PathVars interface {
 	Clear()
 	// VarsType returns the path vars type (Positions or Names)
 	VarsType() PathVarsType
-	AddNamedValue(name string, val string) error
-	AddPositionalValue(val string) error
+	AddNamedValue(name string, val interface{}) error
+	AddPositionalValue(val interface{}) error
 }
 
 type pathVars struct {
@@ -43,9 +43,9 @@ func newPathVars(varsType PathVarsType) PathVars {
 
 func (pvs *pathVars) GetPositional(position int) (string, bool) {
 	if position < 0 && (len(pvs.all)+position) >= 0 {
-		return pvs.all[len(pvs.all)+position].Value, true
+		return getValueIf(pvs.all[len(pvs.all)+position].Value)
 	} else if position >= 0 && position < len(pvs.all) {
-		return pvs.all[position].Value, true
+		return getValueIf(pvs.all[position].Value)
 	}
 	return "", false
 }
@@ -53,9 +53,9 @@ func (pvs *pathVars) GetPositional(position int) (string, bool) {
 func (pvs *pathVars) GetNamed(name string, position int) (string, bool) {
 	if vs, ok := pvs.named[name]; ok {
 		if position < 0 && (len(vs)+position) >= 0 {
-			return vs[len(vs)+position].Value, true
+			return getValueIf(vs[len(vs)+position].Value)
 		} else if position >= 0 && position < len(vs) {
-			return vs[position].Value, true
+			return getValueIf(vs[position].Value)
 		}
 	}
 	return "", false
@@ -63,14 +63,14 @@ func (pvs *pathVars) GetNamed(name string, position int) (string, bool) {
 
 func (pvs *pathVars) GetNamedFirst(name string) (string, bool) {
 	if vs, ok := pvs.named[name]; ok && len(vs) > 0 {
-		return vs[0].Value, true
+		return getValueIf(vs[0].Value)
 	}
 	return "", false
 }
 
 func (pvs *pathVars) GetNamedLast(name string) (string, bool) {
 	if vs, ok := pvs.named[name]; ok && len(vs) > 0 {
-		return vs[len(vs)-1].Value, true
+		return getValueIf(vs[len(vs)-1].Value)
 	}
 	return "", false
 }
@@ -114,7 +114,7 @@ func (pvs *pathVars) VarsType() PathVarsType {
 	return pvs.varsType
 }
 
-func (pvs *pathVars) AddNamedValue(name string, val string) error {
+func (pvs *pathVars) AddNamedValue(name string, val interface{}) error {
 	if pvs.varsType != Names {
 		return errors.New("cannot add named var to non-names vars")
 	}
@@ -130,7 +130,7 @@ func (pvs *pathVars) AddNamedValue(name string, val string) error {
 	return nil
 }
 
-func (pvs *pathVars) AddPositionalValue(val string) error {
+func (pvs *pathVars) AddPositionalValue(val interface{}) error {
 	if pvs.varsType != Positions {
 		return errors.New("cannot add positional var to non-positionals vars")
 	}
@@ -142,7 +142,7 @@ func (pvs *pathVars) AddPositionalValue(val string) error {
 }
 
 // Positional creates a positional PathVars from the values supplied
-func Positional(values ...string) PathVars {
+func Positional(values ...interface{}) PathVars {
 	result := newPathVars(Positions)
 	for _, val := range values {
 		_ = result.AddPositionalValue(val)
@@ -152,15 +152,22 @@ func Positional(values ...string) PathVars {
 
 // Named creates a named PathVars from the name and value pairs supplied
 //
-// Note: If there is not a value for each name - this function panics.
-// So ensure that the number of varargs passed is an even number
-func Named(namesAndValues ...string) PathVars {
+// Notes:
+//
+// * If there is not a value for each name - this function panics (so ensure that the number of varargs passed is an even number!)
+//
+// * If any of the name values are not a string - this function panics
+func Named(namesAndValues ...interface{}) PathVars {
 	if len(namesAndValues)%2 != 0 {
 		panic("must be a value for each name")
 	}
 	result := newPathVars(Names)
 	for i := 0; i < len(namesAndValues); i += 2 {
-		_ = result.AddNamedValue(namesAndValues[i], namesAndValues[i+1])
+		if name, ok := namesAndValues[i].(string); ok {
+			_ = result.AddNamedValue(name, namesAndValues[i+1])
+		} else {
+			panic("name must be a string")
+		}
 	}
 	return result
 }

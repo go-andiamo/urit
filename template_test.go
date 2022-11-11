@@ -118,7 +118,7 @@ func TestTemplate_PathFrom(t *testing.T) {
 		"foo", "fooey",
 		"bar", "abc"))
 	require.Error(t, err)
-	require.Equal(t, `no var for 'bar' (position 2)`, err.Error())
+	require.Equal(t, `no var for 'bar' (varPosition 2)`, err.Error())
 }
 
 func TestTemplate_PathFrom_Positional(t *testing.T) {
@@ -131,15 +131,15 @@ func TestTemplate_PathFrom_Positional(t *testing.T) {
 
 	_, err = tmp.PathFrom(Positional("fooey", "barey"))
 	require.Error(t, err)
-	require.Equal(t, `no var for position 3`, err.Error())
+	require.Equal(t, `no var for varPosition 3`, err.Error())
 
 	_, err = tmp.PathFrom(Positional("fooey"))
 	require.Error(t, err)
-	require.Equal(t, `no var for position 2`, err.Error())
+	require.Equal(t, `no var for varPosition 2`, err.Error())
 
 	_, err = tmp.PathFrom(Positional())
 	require.Error(t, err)
-	require.Equal(t, `no var for position 1`, err.Error())
+	require.Equal(t, `no var for varPosition 1`, err.Error())
 }
 
 func TestTemplate_ResolveTo(t *testing.T) {
@@ -259,6 +259,104 @@ func TestTemplate_Matches_WithVarOption(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestTemplate_PathFrom_WithHost(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id}/bar/{bar-id}`)
+	require.NoError(t, err)
+
+	h := NewHost(`https://www.example.com`)
+	pth, err := tmp.PathFrom(Named("foo-id", "1", "bar-id", "2"), h)
+	require.NoError(t, err)
+	require.Equal(t, `https://www.example.com/foo/1/bar/2`, pth)
+}
+
+func TestTemplate_PathFrom_WithQuery(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id}/bar/{bar-id}`)
+	require.NoError(t, err)
+
+	q, err := NewQueryParams("fooq", true, "barq", 1.23)
+	require.NoError(t, err)
+	pth, err := tmp.PathFrom(Named("foo-id", "1", "bar-id", "2"), q)
+	require.NoError(t, err)
+	require.Contains(t, pth, `/foo/1/bar/2`)
+	require.Contains(t, pth, `fooq=true`)
+	require.Contains(t, pth, `barq=1.23`)
+
+	q, err = NewQueryParams()
+	require.NoError(t, err)
+	pth, err = tmp.PathFrom(Named("foo-id", "1", "bar-id", "2"), q)
+	require.NoError(t, err)
+	require.Equal(t, `/foo/1/bar/2`, pth)
+}
+
+func TestTemplate_PathFrom_WithQueryErrors(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id}/bar/{bar-id}`)
+	require.NoError(t, err)
+
+	q, err := NewQueryParams("fooq", func() bool {
+		// this does not return a string!
+		return false
+	})
+	require.NoError(t, err)
+	_, err = tmp.PathFrom(Named("foo-id", "1", "bar-id", "2"), q)
+	require.Error(t, err)
+	require.Equal(t, `unknown value type`, err.Error())
+}
+
+func TestTemplate_PathFrom_WithRegexCheck(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id:[a-z]{3}}/bar/{bar-id:[0-9]{3}}`)
+	require.NoError(t, err)
+
+	_, err = tmp.PathFrom(Named("foo-id", "1", "bar-id", "2"), PathRegexCheck)
+	require.Error(t, err)
+	require.Equal(t, `no match path var`, err.Error())
+
+	_, err = tmp.PathFrom(Named("foo-id", "abc", "bar-id", "123"), PathRegexCheck)
+	require.NoError(t, err)
+}
+
+func TestTemplate_RequestFrom(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id}/bar/{bar-id}`)
+	require.NoError(t, err)
+
+	h := NewHost(`https://www.example.com`)
+	q, err := NewQueryParams("fooq", true, "barq", 1.23)
+	require.NoError(t, err)
+	hds, err := NewHeaders("Accept", "application/json")
+	require.NoError(t, err)
+
+	req, err := tmp.RequestFrom("GET", Named("foo-id", "1", "bar-id", "2"), nil, h, q, hds)
+	require.NoError(t, err)
+
+	require.Equal(t, "GET", req.Method)
+	require.Equal(t, `www.example.com`, req.Host)
+	require.Equal(t, `/foo/1/bar/2`, req.URL.Path)
+	require.Contains(t, req.URL.RawQuery, `fooq=true`)
+	require.Contains(t, req.URL.RawQuery, `barq=1.23`)
+	require.Equal(t, `application/json`, req.Header.Get("Accept"))
+	require.Equal(t, 1, len(req.Header))
+}
+
+func TestTemplate_RequestFrom_Errors(t *testing.T) {
+	tmp, err := NewTemplate(`/foo/{foo-id}/bar/{bar-id}`)
+	require.NoError(t, err)
+
+	_, err = tmp.RequestFrom("GET", nil, nil)
+	require.Error(t, err)
+	require.Equal(t, `no var for varPosition 1`, err.Error())
+
+	_, err = tmp.RequestFrom("£££", Named("foo-id", "1", "bar-id", "2"), nil)
+	require.Error(t, err)
+	require.Equal(t, `net/http: invalid method "£££"`, err.Error())
+
+	hds, err := NewHeaders("Accept", func() bool {
+		// this does not return a string!
+		return false
+	})
+	_, err = tmp.RequestFrom("GET", Named("foo-id", "1", "bar-id", "2"), nil, hds)
+	require.Error(t, err)
+	require.Equal(t, `unknown value type`, err.Error())
+}
+
 func TestTemplate_MergeOptions(t *testing.T) {
 	testCases := []struct {
 		initOptions  []interface{}
@@ -351,7 +449,7 @@ func TestTemplate_MergeOptions(t *testing.T) {
 			require.NoError(t, err)
 			rt, ok := tmp.(*template)
 			require.True(t, ok)
-			fs, vs := rt.mergeOptions(tc.addOptions)
+			fs, vs := rt.mergeParseOptions(tc.addOptions)
 			require.Equal(t, tc.expectFixeds, len(fs))
 			require.Equal(t, tc.expectVars, len(vs))
 		})
