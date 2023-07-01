@@ -212,3 +212,39 @@ func TestPathVars_Get_Named(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "c", v)
 }
+
+func TestPathVarsFromMap(t *testing.T) {
+	m := map[string]interface{}{
+		"foo": "a",
+		"bar": "b",
+	}
+	args := PathVarsFromMap(m)
+	require.Equal(t, 2, args.Len())
+
+	v, ok := args.GetNamed("foo", 0)
+	require.True(t, ok)
+	require.Equal(t, "a", v)
+	v, ok = args.GetNamed("bar", 0)
+	require.True(t, ok)
+	require.Equal(t, "b", v)
+
+	m = map[string]interface{}{
+		"foo": "a",
+		"bar": []interface{}{"b", "c", "d"},
+	}
+	args = PathVarsFromMap(m)
+	require.Equal(t, 4, args.Len())
+
+	v, ok = args.GetNamed("foo", 0)
+	require.True(t, ok)
+	require.Equal(t, "a", v)
+	v, ok = args.GetNamed("bar", 0)
+	require.True(t, ok)
+	require.Equal(t, "b", v)
+	v, ok = args.GetNamed("bar", 1)
+	require.True(t, ok)
+	require.Equal(t, "c", v)
+	v, ok = args.GetNamed("bar", 2)
+	require.True(t, ok)
+	require.Equal(t, "d", v)
+}

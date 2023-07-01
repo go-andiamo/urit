@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/require"
 	"net/http"
+	"net/url"
 	"regexp"
 	"testing"
 )
@@ -28,6 +29,79 @@ func TestMatchString(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bbb", v)
 
+	v, ok = args.GetNamedFirst("foo")
+	require.True(t, ok)
+	require.Equal(t, "fooey", v)
+	v, ok = args.GetNamedFirst("bar")
+	require.True(t, ok)
+	require.Equal(t, "aaa", v)
+	v, ok = args.GetNamedLast("bar")
+	require.True(t, ok)
+	require.Equal(t, "bbb", v)
+}
+
+func TestMatchWithUrlString(t *testing.T) {
+	tmp, err := NewTemplate("/foo/{foo}/bar/{bar}/{bar}")
+	require.NoError(t, err)
+	require.NotNil(t, tmp)
+
+	_, ok := tmp.Matches("https://my.org/foo")
+	require.False(t, ok)
+
+	args, ok := tmp.Matches("https://my.org/foo/fooey/bar/aaa/bbb")
+	require.True(t, ok)
+	v, ok := args.GetPositional(0)
+	require.True(t, ok)
+	require.Equal(t, "fooey", v)
+	v, ok = args.GetPositional(1)
+	require.True(t, ok)
+	require.Equal(t, "aaa", v)
+	v, ok = args.GetPositional(2)
+	require.True(t, ok)
+	require.Equal(t, "bbb", v)
+	_, ok = args.GetPositional(3)
+	require.False(t, ok)
+	v, ok = args.GetNamedFirst("foo")
+	require.True(t, ok)
+	require.Equal(t, "fooey", v)
+	v, ok = args.GetNamedFirst("bar")
+	require.True(t, ok)
+	require.Equal(t, "aaa", v)
+	v, ok = args.GetNamedLast("bar")
+	require.True(t, ok)
+	require.Equal(t, "bbb", v)
+
+	// bad url...
+	const badUrl = "://my.org"
+	_, ok = tmp.Matches(badUrl)
+	require.False(t, ok)
+	_, err = url.Parse(badUrl)
+	require.Error(t, err)
+}
+
+func TestMatchWithUrl(t *testing.T) {
+	tmp, err := NewTemplate("/foo/{foo}/bar/{bar}/{bar}")
+	require.NoError(t, err)
+	require.NotNil(t, tmp)
+
+	u, _ := url.Parse("https://my.org/foo")
+	_, ok := tmp.MatchesUrl(*u)
+	require.False(t, ok)
+
+	u, _ = url.Parse("https://my.org/foo/fooey/bar/aaa/bbb")
+	args, ok := tmp.MatchesUrl(*u)
+	require.True(t, ok)
+	v, ok := args.GetPositional(0)
+	require.True(t, ok)
+	require.Equal(t, "fooey", v)
+	v, ok = args.GetPositional(1)
+	require.True(t, ok)
+	require.Equal(t, "aaa", v)
+	v, ok = args.GetPositional(2)
+	require.True(t, ok)
+	require.Equal(t, "bbb", v)
+	_, ok = args.GetPositional(3)
+	require.False(t, ok)
 	v, ok = args.GetNamedFirst("foo")
 	require.True(t, ok)
 	require.Equal(t, "fooey", v)
@@ -452,6 +526,83 @@ func TestTemplate_MergeOptions(t *testing.T) {
 			fs, vs := rt.mergeParseOptions(tc.addOptions)
 			require.Equal(t, tc.expectFixeds, len(fs))
 			require.Equal(t, tc.expectVars, len(vs))
+		})
+	}
+}
+
+func TestTemplate_Vars(t *testing.T) {
+	testCases := []struct {
+		path   string
+		expect []PathVar
+	}{
+		{
+			path: "/foo/{fooid}",
+			expect: []PathVar{
+				{
+					Name:          "fooid",
+					NamedPosition: 0,
+					Position:      0,
+				},
+			},
+		},
+		{
+			path: "/foo/{fooid}/foo/{fooid: [a-z]*}",
+			expect: []PathVar{
+				{
+					Name:          "fooid",
+					NamedPosition: 0,
+					Position:      0,
+				},
+				{
+					Name:          "fooid",
+					NamedPosition: 1,
+					Position:      1,
+				},
+			},
+		},
+		{
+			path: "/foo/{foo1}-{foo2}/bar/{bar}-{bar}",
+			expect: []PathVar{
+				{
+					Name:     "foo1",
+					Position: 0,
+				},
+				{
+					Name:     "foo2",
+					Position: 1,
+				},
+				{
+					Name:     "bar",
+					Position: 2,
+				},
+				{
+					Name:          "bar",
+					NamedPosition: 1,
+					Position:      3,
+				},
+			},
+		},
+		{
+			path: "foo/?/bar/?",
+			expect: []PathVar{
+				{
+					Position: 0,
+				},
+				{
+					Position: 1,
+				},
+			},
+		},
+	}
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("[%d]", i+1), func(t *testing.T) {
+			tmp, err := NewTemplate(tc.path)
+			require.NoError(t, err)
+			vars := tmp.Vars()
+			require.Equal(t, len(tc.expect), len(vars))
+			for vi, v := range vars {
+				require.Equal(t, tc.expect[vi], v)
+			}
 		})
 	}
 }

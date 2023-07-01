@@ -149,6 +149,28 @@ func (pt *pathPart) pathFrom(tracker *positionsTracker) (string, error) {
 	return `/` + pb.String(), nil
 }
 
+func (pt *pathPart) getVars(vars []PathVar, namePosns map[string]int) []PathVar {
+	if !pt.fixed && len(pt.subParts) > 0 {
+		for _, sp := range pt.subParts {
+			vars = sp.getVars(vars, namePosns)
+		}
+	} else if !pt.fixed {
+		if pt.name == "" {
+			vars = append(vars, PathVar{
+				Position: len(vars),
+			})
+		} else {
+			vars = append(vars, PathVar{
+				Name:          pt.name,
+				NamedPosition: namePosns[pt.name],
+				Position:      len(vars),
+			})
+			namePosns[pt.name] = namePosns[pt.name] + 1
+		}
+	}
+	return vars
+}
+
 type positionsTracker struct {
 	vars           PathVars
 	varPosition    int

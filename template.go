@@ -5,6 +5,7 @@ import (
 	"github.com/go-andiamo/splitter"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -51,6 +52,9 @@ type Template interface {
 	// Matches checks whether the specified path matches the template -
 	// and if a successful match, returns the extracted path vars
 	Matches(path string, options ...interface{}) (PathVars, bool)
+	// MatchesUrl checks whether the specified URL path matches the template -
+	// and if successful match, returns the extracted path vars
+	MatchesUrl(u url.URL, options ...interface{}) (PathVars, bool)
 	// MatchesRequest checks whether the specified request matches the template -
 	// and if a successful match, returns the extracted path vars
 	MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool)
@@ -60,6 +64,8 @@ type Template interface {
 	ResolveTo(vars PathVars) (Template, error)
 	// VarsType returns the path vars type (Positions or Names)
 	VarsType() PathVarsType
+	// Vars returns the path vars of the template
+	Vars() []PathVar
 	// OriginalTemplate returns the original (or generated) path template string
 	OriginalTemplate() string
 }
@@ -137,6 +143,26 @@ func (t *template) RequestFrom(method string, vars PathVars, body io.Reader, opt
 // Matches checks whether the specified path matches the template -
 // and if a successful match, returns the extracted path vars
 func (t *template) Matches(path string, options ...interface{}) (PathVars, bool) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, false
+	}
+	return t.matches(u.Path, options...)
+}
+
+// MatchesUrl checks whether the specified URL path matches the template -
+// and if successful match, returns the extracted path vars
+func (t *template) MatchesUrl(u url.URL, options ...interface{}) (PathVars, bool) {
+	return t.matches(u.Path, options...)
+}
+
+// MatchesRequest checks whether the specified request matches the template -
+// and if a successful match, returns the extracted path vars
+func (t *template) MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool) {
+	return t.matches(req.URL.Path, options...)
+}
+
+func (t *template) matches(path string, options ...interface{}) (PathVars, bool) {
 	pts, err := matchPathSplitter.Split(path)
 	if err != nil || len(pts) != len(t.pathParts) {
 		return nil, false
@@ -151,12 +177,6 @@ func (t *template) Matches(path string, options ...interface{}) (PathVars, bool)
 		}
 	}
 	return result, ok
-}
-
-// MatchesRequest checks whether the specified request matches the template -
-// and if a successful match, returns the extracted path vars
-func (t *template) MatchesRequest(req *http.Request, options ...interface{}) (PathVars, bool) {
-	return t.Matches(req.URL.Path, options...)
 }
 
 // Sub generates a new template with added sub-path
@@ -279,6 +299,16 @@ func (t *template) VarsType() PathVarsType {
 		return Positions
 	}
 	return Names
+}
+
+// Vars returns the path vars of the template
+func (t *template) Vars() []PathVar {
+	result := make([]PathVar, 0, len(t.pathParts))
+	namePosns := map[string]int{}
+	for _, p := range t.pathParts {
+		result = p.getVars(result, namePosns)
+	}
+	return result
 }
 
 // OriginalTemplate returns the original (or generated) path template string
