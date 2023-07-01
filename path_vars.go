@@ -41,6 +41,21 @@ func newPathVars(varsType PathVarsType) PathVars {
 	}
 }
 
+func PathVarsFromMap(m map[string]interface{}) PathVars {
+	result := newPathVars(Names)
+	for k, v := range m {
+		switch av := v.(type) {
+		case []interface{}:
+			for _, sv := range av {
+				_ = result.AddNamedValue(k, sv)
+			}
+		default:
+			_ = result.AddNamedValue(k, av)
+		}
+	}
+	return result
+}
+
 func (pvs *pathVars) GetPositional(position int) (string, bool) {
 	if position < 0 && (len(pvs.all)+position) >= 0 {
 		return getValueIf(pvs.all[len(pvs.all)+position].Value)
