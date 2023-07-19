@@ -2,6 +2,7 @@ package urit
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/url"
@@ -603,6 +604,50 @@ func TestTemplate_Vars(t *testing.T) {
 			for vi, v := range vars {
 				require.Equal(t, tc.expect[vi], v)
 			}
+		})
+	}
+}
+
+func TestTemplate_Template(t *testing.T) {
+	testCases := []struct {
+		path   string
+		expect string
+	}{
+		{
+			path:   "/",
+			expect: "/",
+		},
+		{
+			path:   "/foo/bar/baz",
+			expect: "/foo/bar/baz",
+		},
+		{
+			path:   "/foo/{fooid}/bar/{barid}/baz/{bazid}",
+			expect: "/foo/{fooid}/bar/{barid}/baz/{bazid}",
+		},
+		{
+			path:   "/foo/{fooid: [a-z]*}/bar/{barid: [a-z]*}/baz/{bazid: [a-z]*}",
+			expect: "/foo/{fooid}/bar/{barid}/baz/{bazid}",
+		},
+		{
+			path:   "/foo/{fooA}-{fooB}",
+			expect: "/foo/{fooA}-{fooB}",
+		},
+		{
+			path:   "/foo/{fooA: [a-z]*}-{fooB: [a-z]*}",
+			expect: "/foo/{fooA}-{fooB}",
+		},
+		{
+			path:   "/foo/{fooA: [a-z]*}-{fooB: [a-z]*}/bar/{barA}-{barB}",
+			expect: "/foo/{fooA}-{fooB}/bar/{barA}-{barB}",
+		},
+	}
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("[%d]", i+1), func(t *testing.T) {
+			tmp, err := NewTemplate(tc.path)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expect, tmp.Template(true))
+			assert.Equal(t, tc.path, tmp.Template(false))
 		})
 	}
 }

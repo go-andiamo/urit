@@ -171,6 +171,18 @@ func (pt *pathPart) getVars(vars []PathVar, namePosns map[string]int) []PathVar 
 	return vars
 }
 
+func (pt *pathPart) buildNoPattern(builder *strings.Builder) {
+	if pt.fixed {
+		builder.WriteString(pt.fixedValue)
+	} else if len(pt.subParts) > 0 {
+		for _, sp := range pt.subParts {
+			sp.buildNoPattern(builder)
+		}
+	} else {
+		builder.WriteString("{" + pt.name + "}")
+	}
+}
+
 type positionsTracker struct {
 	vars           PathVars
 	varPosition    int

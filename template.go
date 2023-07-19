@@ -68,6 +68,8 @@ type Template interface {
 	Vars() []PathVar
 	// OriginalTemplate returns the original (or generated) path template string
 	OriginalTemplate() string
+	// Template returns the template (optionally with any path var patterns removed)
+	Template(removePatterns bool) string
 }
 
 type template struct {
@@ -313,6 +315,22 @@ func (t *template) Vars() []PathVar {
 
 // OriginalTemplate returns the original (or generated) path template string
 func (t *template) OriginalTemplate() string {
+	return t.originalTemplate
+}
+
+// Template returns the template (optionally with any path var patterns removed)
+func (t *template) Template(removePatterns bool) string {
+	if removePatterns {
+		var builder strings.Builder
+		if len(t.pathParts) == 0 {
+			builder.WriteString("/")
+		}
+		for _, pt := range t.pathParts {
+			builder.WriteString("/")
+			pt.buildNoPattern(&builder)
+		}
+		return builder.String()
+	}
 	return t.originalTemplate
 }
 
